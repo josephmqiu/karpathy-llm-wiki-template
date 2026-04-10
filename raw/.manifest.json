@@ -1,0 +1,36 @@
+[
+  {
+    "source_path": "raw/2026-04-09-llm-wiki-research-synthesis.md",
+    "hash": "3d9367851b008a7ca0b872bba34b3203db0a97afcfdefa53cd4d4dabb2fada35",
+    "status": "ingested",
+    "loaded_at": "2026-04-09",
+    "ingested_at": "2026-04-09",
+    "pages_created": [
+      "wiki/shared/sources/llm-wiki-research-synthesis.md"
+    ],
+    "pages_updated": [
+      "wiki/shared/entities/andrej-karpathy.md",
+      "wiki/shared/concepts/llm-wiki-pattern.md",
+      "wiki/domains/llm-wiki/llm-wiki-moc.md",
+      "wiki/index.md"
+    ],
+    "notes": "Second ingest. Community survey of LLM Wiki implementations and pitfalls."
+  },
+  {
+    "source_path": "raw/2026-04-09-karpathy-llm-wiki-gist.md",
+    "hash": "dc3efe98ae62f23dd08acad13aba2e95287beb20b6bec2f4af0423557fe37401",
+    "status": "ingested",
+    "loaded_at": "2026-04-09",
+    "ingested_at": "2026-04-09",
+    "pages_created": [
+      "wiki/shared/sources/karpathy-llm-wiki-gist.md",
+      "wiki/shared/entities/andrej-karpathy.md",
+      "wiki/shared/concepts/llm-wiki-pattern.md"
+    ],
+    "pages_updated": [
+      "wiki/domains/llm-wiki/llm-wiki-moc.md",
+      "wiki/index.md"
+    ],
+    "notes": "First ingest. Foundational gist proposing the LLM Wiki pattern."
+  }
+]

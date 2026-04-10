@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# Obsidian per-device state (don't sync across machines via git)
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/workspaces.json
+.obsidian/cache
+
+# Editor junk
+*.swp
+*~
