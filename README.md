@@ -1,8 +1,52 @@
+# Karpathy LLM Wiki Template
+
+A ready-to-use implementation of [Andrej Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — where an LLM incrementally builds and maintains a persistent markdown wiki that compounds over time, instead of re-deriving knowledge from raw documents on every query (RAG).
+
+## What this is
+
+You collect sources (articles, papers, notes). You point your LLM at them one at a time. The LLM reads each source, discusses what's worth keeping, then writes and cross-references wiki pages — summaries, entity profiles, concept explanations, synthesis pages. Over time the wiki becomes a compounding knowledge base with backlinks, citations, and structure that no human would maintain by hand.
+
+The LLM is the bookkeeper. You are the thinker.
+
+## What's included
+
+| Component | Purpose |
+|---|---|
+| [`CLAUDE.md`](CLAUDE.md) | The full schema — rules, workflows, conventions. Claude reads this every session. |
+| [`SETUP.md`](SETUP.md) | First-time setup guide — software, Obsidian plugins, getting started steps. |
+| `wiki/` | The LLM-maintained knowledge base (index, log, shared content, topic domains, synthesis) |
+| `raw/` | Immutable source documents — the LLM reads but never modifies these |
+| `inbox/` | Low-friction capture — drop messy notes here, triage later |
+| `scripts/verify-v1.sh` | Integrity checker — frontmatter, wikilinks, manifest, naming conventions |
+
+The template ships with two pre-ingested example sources (Karpathy's original gist + a community research synthesis) so you can see the pattern in action before adding your own content.
+
+## Four operations
+
+| Operation | What it does |
+|---|---|
+| **ingest** | Process a raw source into wiki pages. Hash check, read, discuss with you, write pages, update cross-references, commit. |
+| **query** | Ask a question against the wiki. The LLM reads the index, drills into relevant pages, synthesizes an answer with citations. Good answers get filed back as synthesis pages. |
+| **lint** | Health check — dead wikilinks, orphan pages, naming collisions, stale content, contradictions. Reports findings, asks before fixing. |
+| **triage** | Process the inbox. Each item gets promoted to a source (then ingested), folded into an existing page, or discarded. |
+
+## Quick start
+
+```sh
+git clone https://github.com/josephmqiu/karpathy-llm-wiki-template.git my-wiki
+cd my-wiki
+claude
+```
+
+See [`SETUP.md`](SETUP.md) for full setup instructions including Obsidian plugins and configuration.
+
+---
+
 # User Manual
 
 Plain-English guide to using this vault day to day.
 
-If you want the system rules Claude follows, read [`CLAUDE.md`](CLAUDE.md). This file is the practical version: what goes where, what to ask, and what not to touch.
+If you want the system rules Claude follows, read [`CLAUDE.md`](CLAUDE.md). This section is the practical version: what goes where, what to ask, and what not to touch.
 
 ---
 
