@@ -2,6 +2,7 @@
 id: llm-wiki-moc
 title: LLM Wiki MOC
 type: moc
+sources: ["raw/2026-04-09-karpathy-llm-wiki-gist.md", "raw/2026-04-09-llm-wiki-research-synthesis.md"]
 topics: ["llm-wiki"]
 status: draft
 created: 2026-04-09
@@ -33,7 +34,6 @@ Map of Content for the LLM wiki / agentic knowledge management topic. Curated en
 
 ## Open questions for this domain
 
-- What's the right kill-switch threshold once topics 2 and 3 are added?
+- How well does the query → synthesis filing loop work in practice?
 - When does a manual `hot.md` become useful enough to add as derived-from-log?
-- Does the `inbox/` + `triage` workflow stick as a habit, or get abandoned?
 - How does the wiki perform past 50 sources? Past 200?

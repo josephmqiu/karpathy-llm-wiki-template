@@ -51,6 +51,26 @@ FROM "wiki/shared" OR "wiki/domains"
 WHERE status = "superseded"
 ```
 
+## All syntheses
+
+```dataview
+TABLE question, topics, status, created
+FROM "wiki/synthesis"
+WHERE type = "synthesis"
+SORT created DESC
+```
+
+## Lint cadence
+
+Recommended cadence: every 5 ingests or 14 days, whichever comes first.
+
+```dataview
+TABLE type, status, last_reviewed
+FROM "wiki/shared" OR "wiki/domains"
+WHERE last_reviewed < date(today) - dur(60 days)
+SORT last_reviewed ASC
+```
+
 ## Kill-switch metric (deferred until topic 2 exists)
 
 When 2+ MOCs exist, this query shows entities linked from multiple MOCs (cross-domain entities). The metric: `% of shared entities linked from 2+ MOCs`. Used to validate the type-first hybrid placement rule.

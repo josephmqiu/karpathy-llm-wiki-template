@@ -143,6 +143,12 @@ source_ref: raw/2026-04-09-foo.md    # the raw file this is a summary of
 hash: <sha256>                       # mirrors raw/.manifest.json
 ```
 
+**Synthesis pages** add one more field:
+
+```yaml
+question: "How does X relate to Y?"  # the original user question that produced this synthesis
+```
+
 **Field semantics:**
 
 | Field | Required | Notes |
@@ -159,8 +165,49 @@ hash: <sha256>                       # mirrors raw/.manifest.json
 | `updated` | yes | ISO date — bump on every edit |
 | `last_reviewed` | yes | ISO date — bump when human-verified |
 | `superseded_by` | yes | `null` unless `status: superseded`, then `"[[replacement-page]]"` |
+| `question` | synthesis pages only | Original question that produced the synthesis |
 | `source_ref` | source pages only | Path to the raw file |
 | `hash` | source pages only | SHA256 of the raw file content |
+
+---
+
+## 6A. Provenance + trust annotations
+
+For **all new pages and major rewrites**, annotate both:
+
+1. **What kind of claim is being made**
+2. **How much to trust the section without rereading raw sources**
+
+Current pages are grandfathered. Backfill opportunistically during normal edits and reviews.
+
+### Provenance labels
+
+Use compact inline labels at the paragraph, bullet, or short callout scope:
+
+- `[extracted]` — directly supported by one or more cited sources
+- `[inferred]` — LLM synthesis or implication, not stated in exactly one source
+- `[ambiguous]` — source basis is underspecified, incomplete, or unclear
+- `[disputed]` — sources conflict; preserve both sides explicitly
+
+Prefer the **smallest useful unit**. If one label covers the whole paragraph, do not label every sentence.
+
+### Coverage labels
+
+Add a coverage tag to major section headings on new pages and major rewrites:
+
+```markdown
+## Summary [coverage: high]
+## Key claims [coverage: medium]
+## Disputed [coverage: low]
+```
+
+Coverage rubric:
+
+- `high` — backed by several consistent sources, or by a strong primary source with low interpretive risk
+- `medium` — backed by 2–3 sources, or by one source with moderate synthesis
+- `low` — thinly sourced, provisional, disputed, or primarily inferential
+
+Coverage is a **routing signal**, not a badge of honor. It tells future sessions when to trust the compiled wiki and when to reread raw sources.
 
 ---
 
@@ -188,6 +235,33 @@ DO NOT skip steps 2 and 3. Skipping the index/MOC means you'll miss existing pag
 
 ---
 
+### Preflight checks (mandatory at session start)
+
+After reading `CLAUDE.md` and `wiki/index.md`, check two things before substantive work:
+
+1. **Last lint date.** Find the most recent `lint |` entry in `wiki/log.md`. If the last lint is more than 14 days old, say: `Lint is overdue (last run: YYYY-MM-DD). Want me to run it before we start?`
+2. **Ingests since last lint.** Count `ingest |` entries since the most recent `lint |` entry. If that count is 5 or more, say: `We've hit ingest N since the last lint — time for a scheduled health check.`
+
+These checks take seconds. Do not skip them. They are the enforcement mechanism for lint cadence.
+
+---
+
+### Context tiers (formalize at ~20–30 ingested sources)
+
+At current scale, the read order above is sufficient. Once the vault reaches roughly **20–30 ingested sources**, formalize context loading into two tiers:
+
+- **L1 (always load)** — `CLAUDE.md`, `wiki/index.md`, the relevant MOC(s), and any generated domain overview/resume page explicitly linked from the MOC
+- **L2 (load on demand)** — specific entity/concept/source/synthesis pages, older log history, and deeper supporting material
+
+Promotion rule:
+
+- Put material in **L1** if missing it could cause a dangerous, expensive, or embarrassing mistake
+- Keep material in **L2** if it is mainly explanatory, historical, or only occasionally useful
+
+Do **not** introduce a manually maintained `hot.md`. If a resume layer is added later, it must be **generated from the wiki/log**, not hand-maintained.
+
+---
+
 ## 9. Workflow: `ingest`
 
 Process a new raw source into wiki pages.
@@ -199,7 +273,7 @@ Process a new raw source into wiki pages.
    - If found with `status: ingested` → **abort**, tell User "already ingested as [page]"
    - If found with `status: deferred` → proceed (and update the entry to `ingested` at the end)
    - If not found → proceed (and add a new entry at the end)
-3. **Read the source in full.** For long sources, consider splitting into chapter-level files BEFORE ingesting (naive whole-book ingests produce slop).
+3. **Read the source in full.** For long sources, split into chapter-level or section-level files BEFORE ingesting whenever practical. This is the default for books, long transcripts, and multi-section reports; naive whole-document ingests produce slop.
 4. **Discuss takeaways with User.** What's the source about? What entities does it mention? What concepts? What's worth keeping? Get sign-off before writing.
 5. **Decide placement of the source summary**: `wiki/shared/sources/` (default) or `wiki/domains/<topic>/sources/` (single-domain only)
 6. **Write the source summary page** with full frontmatter including `source_ref` and `hash`.
@@ -229,22 +303,43 @@ Process a new raw source into wiki pages.
 
 Answer a question against the wiki.
 
+### When does this workflow activate?
+
+Any time the User asks a question that could be answered, even partially, by existing wiki content, this is a `query` operation. The User does **not** need to say "run a query."
+
+Examples:
+
+- "What do we know about X?"
+- "How does X relate to Y?"
+- "Compare X and Y"
+- Any domain question where reading wiki pages first would improve the answer
+
+Default behavior: **read the wiki first, cite wiki pages in the answer, then decide whether to file.** Even if the answer is not filed, read-first discipline is what makes the wiki useful.
+
 ### Steps
 
 1. **Read in order**: `index.md` → relevant `<topic>-moc.md` → specific pages (see §8)
 2. **Synthesize an answer with inline citations** to specific wiki pages, e.g., `[[andrej-karpathy]] proposed the LLM wiki pattern in his April 2026 gist [[karpathy-llm-wiki-gist]].`
+2b. **State your filing decision.** After answering, add one line: `**Filing decision:** [yes/no] — [reason]`. This is not a request for permission; it is a forcing function to actually evaluate the rule below. The User can override with `save that`, `file it`, or `skip`.
 3. **Decide whether to file as a synthesis page.** The decision can come from User interactively OR from the originating instruction (e.g., "file it" in a subagent or scripted run). When no interactive human is available, apply the **decision rule** below on your own:
 
-   | File? | When |
+   | File? | Test |
    |---|---|
-   | **Yes, file** | The answer is recurring (likely to come up again), novel (not derivable from a single existing page), synthesizes 2+ pages, or is foundational framing future queries will re-reference |
-   | **No, return only** | The answer is generic, one-off, or purely restates a single existing page |
+   | **Yes** | Answer cites 2+ wiki pages and adds reasoning not present on any single page |
+   | **Yes** | User says `save that`, `file it`, or similar |
+   | **Yes** | The question matches or extends an open question from a MOC |
+   | **Probably yes** | The answer would save future-you from re-reading 3+ pages to reconstruct |
+   | **No** | The answer restates a single existing page without adding synthesis |
+   | **No** | The answer is about session mechanics rather than domain knowledge |
 
-   When in doubt and the answer synthesizes ≥2 sources → file.
+   When in doubt and the answer cites ≥2 wiki pages → file.
 
-4. **If filing, write `wiki/synthesis/<slug>.md`** with full frontmatter (per §6: all required fields including `type: synthesis`). **Include the original question verbatim as a blockquote near the top of the page** — e.g., `> **Question:** <question text>` — so the synthesis is discoverable by the question that spawned it.
-5. **Update `wiki/index.md`** — add the new page under the "Synthesis" section
-6. **Append to `wiki/log.md`** with the full bullet enumeration (match §9's ingest format style):
+   **Quick save:** If the User says `save that` or `file it` after any answer, file the immediately preceding answer as a synthesis. Do not re-ask the question or re-derive the answer unless the User asks for a rewrite.
+
+4. **If filing, write `wiki/synthesis/<slug>.md`** with full frontmatter (per §6: all required fields including `type: synthesis` and `question:`). **Include the original question verbatim as a blockquote near the top of the page** — e.g., `> **Question:** <question text>` — so the synthesis is discoverable both structurally and in prose.
+5. **Update `wiki/index.md`** — add the new page under the "Synthesis" section.
+5b. **Update the relevant MOC(s).** Add the synthesis to the MOC's "Syntheses" section. If it answers or partially answers an open question, annotate that question with `answered by [[<synthesis-page>]]` or remove it if fully resolved.
+6. **Append to `wiki/log.md`** — every query operation gets a log entry, whether filed or not:
     ```markdown
     ## [YYYY-MM-DD] query | <question summary>
 
@@ -254,7 +349,7 @@ Answer a question against the wiki.
     - Decision to file: <yes/no> — <one-line rationale referencing the decision rule>
     - Executed by: <User interactive | fresh subagent validation run | other>
     ```
-7. **Git commit** (only if a synthesis was filed): `git commit -am "synthesis: <topic>"`
+7. **Git commit** only if a synthesis was filed or another durable wiki page changed materially. Stage only the intended files; do **not** rely on `git commit -am` in a dirty worktree. Unfiled queries normally log only.
 
 ---
 
@@ -262,29 +357,49 @@ Answer a question against the wiki.
 
 Audit the wiki for problems. Run `scripts/verify-v1.sh` first if it exists, then do semantic checks.
 
+### When to run lint
+
+- **After every 5th ingest since the last lint** — run a full health check
+- **On request** — User says `lint`, `health check`, or similar
+- **At session start if the last lint is >14 days old** — the §8 preflight should catch this
+
+At current scale, a full lint is cheap. Do not skip it just to save time.
+
 ### Steps
 
-1. **Run `scripts/verify-v1.sh`** — captures structural issues (missing frontmatter, dead wikilinks, manifest mismatches, log ordering)
-2. **Find orphan pages** — pages with zero inbound `[[wikilinks]]` from any other page or MOC
-3. **Find supersession candidates** — pages whose `last_reviewed` is much older than the latest source on the same topic, or whose claims contradict newer sources
-4. **Find naming collisions** — two pages with overlapping `aliases` or near-duplicate `title`
-5. **Find stub-rot** — pages marked `status: stub` for >30 days
-6. **Compute the kill-switch metric** (currently moot — only one topic): `% of entities in wiki/shared/entities/ that are linked from 2+ MOCs`. Once topics 2/3 exist, this validates the type-first hybrid placement rule.
-7. **Report findings to User.** DO NOT auto-fix anything. Present findings as a list with proposed actions, ask User to approve each.
-8. **If User approves fixes**, apply them, then re-run `verify-v1.sh` to confirm
-9. **Append to `log.md`**:
+### Tier 1: Structural (scripted)
+
+1. **Run `scripts/verify-v1.sh`** — folder structure, frontmatter/schema, dead wikilinks, manifest reconciliation, log reconciliation, ordering, naming, kill-switch metric, and deterministic health checks (orphans, stub-rot, stale review dates, alias collisions, query/synthesis health).
+
+### Tier 2: Semantic (LLM-powered)
+
+Read wiki pages and apply judgment. Report findings; **never auto-fix**.
+
+2. **Contradiction detection** — scan pages that share sources or have direct backlink relationships for claims that conflict. Use shared `sources` entries or mutual `[[wikilinks]]` as the first-pass scope; `topics` alone is too broad.
+3. **Concept gaps** — find meaningful named concepts, techniques, people, or tools that appear repeatedly across pages but have no page or alias.
+4. **Missing cross-references** — find page pairs that are probably related but disconnected. Exclude broad survey sources when using shared-source overlap as evidence.
+5. **Source coverage gaps** — inspect MOC open questions and suggest concrete searches for questions with weak source coverage.
+6. **Supersession candidates** — judge whether newer source-backed content actually supersedes older claims, not just whether the dates are old.
+7. **Report findings to User** as one structured report. DO NOT auto-fix anything.
+8. **If User approves fixes**, apply them, then re-run `verify-v1.sh` to confirm.
+9. **Append to `wiki/log.md`**:
     ```markdown
     ## [YYYY-MM-DD] lint | <summary>
 
     - verify-v1.sh: PASS / FAIL
-    - Orphans: N
-    - Supersession candidates: N
-    - Naming collisions: N
-    - Stub-rot: N
-    - Kill-switch metric: <X>% (deferred until 2+ topics)
-    - Fixes applied: [[a]], [[b]]
+    - Orphans: N (structural)
+    - Stub-rot: N (structural)
+    - Stale pages: N (structural)
+    - Alias collisions: N (structural)
+    - Contradictions: N (semantic)
+    - Concept gaps: N (semantic)
+    - Missing cross-refs: N (semantic)
+    - Coverage gaps: N (informational)
+    - Supersession candidates: N (semantic)
+    - Kill-switch metric: <X>%
+    - Fixes applied: [[a]], [[b]]  (or: "none — clean")
     ```
-10. **Git commit** if fixes applied: `git commit -am "lint: <summary>"`
+10. **Git commit** if fixes were applied. Stage only the intended files.
 
 ---
 
@@ -346,7 +461,9 @@ Things NOT to do:
 - ❌ **Creating duplicate entities** (e.g., `karpathy.md` AND `andrej-karpathy.md`). Check existing entities first; use `aliases` for variants.
 - ❌ **Skipping the log.** Every operation gets a log entry.
 - ❌ **Forcing 10–15 page touches early.** First 10 ingests should be 4–8. Don't fabricate pages just to hit a number.
+- ❌ **Naive whole-document ingest of long sources.** Books, long transcripts, and large reports should usually be split to chapter/section-level first.
 - ❌ **Filing everything as a synthesis.** Most query answers are one-offs. Only file recurring or novel syntheses.
+- ❌ **Answering domain questions without reading the wiki first.** If the User asks about a topic that has wiki pages, read them before answering. The query workflow activates implicitly.
 - ❌ **Auto-fixing lint findings.** Report → ask → fix. Never silently mutate.
 - ❌ **Putting everything in `domains/`.** Default is `shared/`. Only domain-folder things you're certain are single-domain.
 - ❌ **Reading the wiki for unrelated coding tasks.** This vault is for `llm-wiki` topic knowledge. If a question is about something else, don't burn tokens reading the wiki.
@@ -425,9 +542,9 @@ The five examples below are the executable spine of this manual. Refer to them w
 
 1. Read `index.md` → `wiki/domains/llm-wiki/llm-wiki-moc.md` → drill into `wiki/shared/sources/karpathy-llm-wiki-gist.md`, `wiki/shared/sources/llm-wiki-research-synthesis.md`, and any concept pages on failure modes
 2. Synthesize:
-   > Five recurring failure modes show up across the literature: error compounding through backlinks (cited in [[hn-discussion-llm-wiki]]), cognitive offloading (the user stops thinking because the LLM is "remembering" — see [[matuschak-evergreen-notes]]), markdown-as-database limits past ~100-300 sources (cited in [[stop-calling-it-memory]]), context window degradation past 200K tokens, and source granularity slop from naive whole-book ingests (cited in [[hn-success-report-chapter-splitting]]).
-3. Ask User: "Worth filing as a synthesis page? It pulls together 5 sources and is the kind of question that'll come up again."
-4. User says yes. Create `wiki/synthesis/llm-wiki-failure-modes.md`:
+   > Five recurring failure modes show up in the current wiki coverage: error compounding through backlinks, source granularity slop from naive whole-document ingests, markdown-as-database limits, cognitive offloading, and eventual scale pressure from context limits.
+3. State: `**Filing decision:** yes — this answer synthesizes multiple pages and is likely to be reused.`
+4. If the User says `save that` or `file it`, create `wiki/synthesis/llm-wiki-failure-modes.md`:
    ```yaml
    ---
    id: llm-wiki-failure-modes
@@ -435,10 +552,11 @@ The five examples below are the executable spine of this manual. Refer to them w
    type: synthesis
    aliases: ["wiki failure modes", "llm wiki pitfalls"]
    status: stable
+   question: "What are the failure modes of LLM-maintained wikis?"
    sources:
      - "raw/2026-04-09-karpathy-llm-wiki-gist.md"
      - "raw/2026-04-09-llm-wiki-research-synthesis.md"
-   related: ["[[error-compounding]]", "[[cognitive-offloading]]", "[[markdown-as-database-limits]]"]
+   related: ["[[llm-wiki-pattern]]", "[[karpathy-llm-wiki-gist]]", "[[llm-wiki-research-synthesis]]"]
    topics: ["llm-wiki"]
    created: 2026-04-12
    updated: 2026-04-12
@@ -450,19 +568,20 @@ The five examples below are the executable spine of this manual. Refer to them w
 
    ...synthesis body...
    ```
-5. Update `wiki/index.md` under "Synthesis"
+5. Update `wiki/index.md` and `wiki/domains/llm-wiki/llm-wiki-moc.md` under "Syntheses"
 6. Append to log:
    ```markdown
    ## [2026-04-12] query | what are the failure modes of LLM-maintained wikis?
 
    - Filed as: [[llm-wiki-failure-modes]]
-   - Cited: [[karpathy-llm-wiki-gist]], [[llm-wiki-research-synthesis]], [[error-compounding]], [[cognitive-offloading]]
+   - Cited: [[karpathy-llm-wiki-gist]], [[llm-wiki-research-synthesis]], [[llm-wiki-pattern]]
+   - Decision to file: yes — reusable synthesis across multiple wiki pages
    ```
-7. `git commit -am "synthesis: LLM wiki failure modes"`
+7. Stage the synthesis, index, MOC, and log files explicitly, then commit `git commit -m "synthesis: LLM wiki failure modes"`
 
 ### Example 3 — Resolving a contradiction between sources
 
-**Scenario:** A new source claims "the hot.md cache is essential for session continuity," but an existing concept page `hot-cache-pattern` notes that "manual hot.md will rot within a week." These contradict.
+**Scenario:** A new source claims "a manual hot cache file is essential for session continuity," but an existing concept page `hot-cache-pattern` notes that "manual hot cache files tend to rot quickly." These contradict.
 
 **What to do:**
 
@@ -470,7 +589,7 @@ The five examples below are the executable spine of this manual. Refer to them w
 2. **Flag the contradiction explicitly.** Edit `hot-cache-pattern.md` to add a section:
    ```markdown
    ## Disputed
-   The 2026-04-12 source [[xyz-blog-post]] argues hot.md is essential, contradicting [[codex-review-of-llm-wiki-plan]] which argued manual hot.md rots. Both views below.
+   The 2026-04-12 source [[xyz-blog-post]] argues a manual hot cache file is essential, contradicting [[older-review-page]] which argued manual hot cache files rot quickly. Both views below.
 
    - Pro: ...
    - Con: ...
@@ -484,7 +603,7 @@ The five examples below are the executable spine of this manual. Refer to them w
 
    - Pages updated: [[hot-cache-pattern]] (added Disputed section)
    - Synthesis: [[hot-cache-pattern-debate]]
-   - Sources cited on each side: [[xyz-blog-post]], [[codex-review-of-llm-wiki-plan]]
+   - Sources cited on each side: [[xyz-blog-post]], [[older-review-page]]
    ```
 7. `git commit -am "lint: flag hot.md cache contradiction"`
 
@@ -576,11 +695,12 @@ The five examples below are the executable spine of this manual. Refer to them w
 | Find dead wikilinks | `scripts/verify-v1.sh` |
 | Find recent ingests | `grep '^## \[20.*ingest' wiki/log.md \| tail` |
 | Find an entity by alias | `grep -rn 'aliases.*<alias>' wiki/` |
-| Run lint | `scripts/verify-v1.sh && [discuss findings with User]` |
+| Run lint | `scripts/verify-v1.sh` → semantic review per §11 → discuss findings with User |
 | New entity location | `wiki/shared/entities/` (default) |
 | New concept location | `wiki/shared/concepts/` (default) |
 | New source summary location | `wiki/shared/sources/` (default) |
 | Filed query answer | `wiki/synthesis/<slug>.md` |
+| Quick-save an answer | User says `save that` → file the immediately preceding answer as synthesis |
 | Topic MOC | `wiki/domains/<topic>/<topic>-moc.md` |
 
 ---

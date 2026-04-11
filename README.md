@@ -17,7 +17,7 @@ The LLM is the bookkeeper. You are the thinker.
 | `wiki/` | The LLM-maintained knowledge base (index, log, shared content, topic domains, synthesis) |
 | `raw/` | Immutable source documents — the LLM reads but never modifies these |
 | `inbox/` | Low-friction capture — drop messy notes here, triage later |
-| `scripts/verify-v1.sh` | Integrity checker — frontmatter, wikilinks, manifest, naming conventions |
+| `scripts/verify-v1.sh` | Integrity checker — schema, wikilinks, manifest, naming conventions, and health checks |
 
 The template ships with two pre-ingested example sources (Karpathy's original gist + a community research synthesis) so you can see the pattern in action before adding your own content.
 
@@ -26,8 +26,8 @@ The template ships with two pre-ingested example sources (Karpathy's original gi
 | Operation | What it does |
 |---|---|
 | **ingest** | Process a raw source into wiki pages. Hash check, read, discuss with you, write pages, update cross-references, commit. |
-| **query** | Ask a question against the wiki. The LLM reads the index, drills into relevant pages, synthesizes an answer with citations. Good answers get filed back as synthesis pages. |
-| **lint** | Health check — dead wikilinks, orphan pages, naming collisions, stale content, contradictions. Reports findings, asks before fixing. |
+| **query** | Ask a question against the wiki. The LLM reads the index, drills into relevant pages, synthesizes an answer with citations, states a filing decision, and can file good answers back as synthesis pages. |
+| **lint** | Health check — schema drift, orphan pages, naming collisions, stale content, contradictions, and coverage gaps. Reports findings, asks before fixing. |
 | **triage** | Process the inbox. Each item gets promoted to a source (then ingested), folded into an existing page, or discarded. |
 
 ## Quick start
@@ -56,7 +56,7 @@ If you just opened the vault and want to get oriented:
 
 1. Open [[dashboard]] to see recent activity and summary tables.
 2. Open [[llm-wiki-moc|the llm-wiki MOC]] to browse the main topic from the top.
-3. Follow a few links: [[llm-wiki-pattern]] -> [[memex]] -> [[rag]].
+3. Follow a few links: [[llm-wiki-pattern]] -> [[andrej-karpathy]] -> [[karpathy-llm-wiki-gist]].
 4. Ask Claude a simple question about the topic.
 
 The goal is not to memorize the structure. The goal is to know the few moves you actually use.
@@ -169,13 +169,23 @@ compare what the sources say about RAG versus the compiled-wiki approach
 
 Claude reads the index, the relevant MOC, and the relevant pages, then answers from the wiki.
 
-Sometimes Claude will ask whether the answer is worth saving as a synthesis page. Say yes if:
+This is implicitly the `query` workflow. Every domain question that benefits from existing wiki pages should be answered this way, and every query should get logged in `wiki/log.md`.
+
+After answering, Claude should state a filing decision. Say yes to saving as a synthesis page if:
 
 - you expect to want that answer again
 - it combines multiple pages or sources
 - it creates a framing you would want Future You to find quickly
 
 Say no if it is just a one-off answer.
+
+If Claude already answered and you decide you want it saved, say:
+
+```text
+save that
+```
+
+That should file the immediately preceding answer as a synthesis without re-deriving it.
 
 ---
 
@@ -252,13 +262,13 @@ or:
 run lint
 ```
 
-`verify-v1.sh` is the structural checker. It checks the folder shape, frontmatter, wikilinks, manifest reconciliation, log consistency, naming, and the current kill-switch metric.
+`verify-v1.sh` is the structural checker. It checks the folder shape, frontmatter, schema rules, wikilinks, manifest reconciliation, log consistency, naming, the kill-switch metric, and deterministic health checks like orphans, stub-rot, stale review dates, alias collisions, and query/synthesis health.
 
-`lint` is the broader Claude workflow. It runs the verifier and then looks for semantic issues like orphan pages, stale pages, naming collisions, and contradictions. Claude should report findings and ask before fixing anything.
+`lint` is the broader Claude workflow. It runs the verifier and then looks for semantic issues like contradictions, concept gaps, missing cross-references, supersession candidates, and source coverage gaps. Claude should report findings and ask before fixing anything.
 
 Current expected verifier result in this vault:
 
-- 9 passed
+- 14 passed
 - 1 warning
 - 0 failed
 
@@ -273,8 +283,8 @@ The warning is expected right now because there is only one topic MOC.
 | Command | What it does |
 |---|---|
 | **ingest** | Process a raw source into wiki pages. Hash check → read → discuss → write pages → update MOC/index/log/manifest → commit. |
-| **query** | Ask a question against the wiki. Reads index → MOC → pages → synthesizes answer with citations. Optionally files the answer as a `wiki/synthesis/` page. |
-| **lint** | Health check. Runs `verify-v1.sh` + semantic checks (orphans, dead links, contradictions, stale pages, naming collisions, kill-switch metric). Reports findings, asks before fixing. |
+| **query** | Ask a question against the wiki. Reads index → MOC → pages → synthesizes an answer with citations, states a filing decision, logs the query, and can file the answer as a `wiki/synthesis/` page. |
+| **lint** | Health check. Runs `verify-v1.sh` + semantic checks (contradictions, concept gaps, missing cross-references, coverage gaps, supersession). Reports findings, asks before fixing. |
 | **triage** | Process `inbox/` items. For each: promote to source (→ ingest), extend an existing page, or discard. |
 
 ### Structural operations
@@ -286,7 +296,7 @@ The warning is expected right now because there is only one topic MOC.
 | **disambiguate** | Split one page into two (e.g., `attention.md` → `attention-ml.md` + `attention-cognition.md`). |
 | **fix / correct** | Edit a specific claim or typo in a page. Bumps `updated`, re-verifies. |
 
-You can also just ask things in plain English — *"what does the wiki say about X?"*, *"compare sources A and B"*, *"show me all stub pages"*, *"undo the last ingest"*. These aren't formal workflows; Claude reads the wiki and responds.
+You can also just ask things in plain English — *"what does the wiki say about X?"*, *"compare sources A and B"*, *"show me all stub pages"*, *"undo the last ingest"*. For domain questions, that is still the `query` workflow even if you do not use the word "query."
 
 ---
 
@@ -425,7 +435,7 @@ You do not need a rigid process, but this is a sane default:
 
 - ingest one source at a time
 - triage the inbox at least weekly
-- run lint weekly or whenever the structure feels messy
+- run lint every 5 ingests or when the last lint is older than 14 days
 - use the graph and dashboard occasionally to stay oriented
 
 This system gets better from steady use, not from heroic cleanup sessions.
@@ -437,7 +447,7 @@ This system gets better from steady use, not from heroic cleanup sessions.
 - [[dashboard]]: the easiest high-level status view
 - [[llm-wiki-moc]]: the main topic hub
 - [[karpathy-llm-wiki-gist]]: the source that kicked off this vault
-- [[llm-wiki-and-memex]]: one of the best examples of a saved synthesis
+- [[llm-wiki-research-synthesis]]: community survey of LLM wiki implementations
 
 ---
 

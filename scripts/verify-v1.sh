@@ -13,6 +13,11 @@
 #   6. Log ordering (append-bottom, chronological)
 #   7. Naming convention (kebab-case in wiki/)
 #   8. Kill-switch metric (% of shared entities linked from 2+ MOCs)
+#   9. Orphan pages (zero inbound links from other content pages)
+#  10. Stub-rot (status: stub older than 30 days)
+#  11. Stale last_reviewed dates (>60 days old)
+#  12. Alias/title collisions
+#  13. Query/synthesis health
 #
 # Requires: bash, python3 (stdlib only), grep, find, awk, sed, sort.
 
@@ -100,9 +105,9 @@ else
 fi
 
 # ----------------------------------------------------------------------
-# Check 2: YAML frontmatter on wiki content pages
+# Check 2: YAML frontmatter + schema on wiki content pages
 # ----------------------------------------------------------------------
-section "Check 2: YAML frontmatter on wiki content pages"
+section "Check 2: YAML frontmatter + schema on wiki content pages"
 
 # Content pages: everything in wiki/ EXCEPT navigation/meta files
 # - index.md and log.md are navigation (top-level wiki/)
@@ -115,43 +120,183 @@ while IFS= read -r f; do
     content_pages+=("$f")
 done < <(find wiki -name "*.md" 2>/dev/null)
 
-bad_frontmatter=()
-missing_required=()
-required_fields=("id" "title" "type" "created" "updated")
+schema_result=$(python3 - <<'PYEOF'
+import ast
+import os
+import re
+import sys
 
-for f in "${content_pages[@]}"; do
-    first_line=$(head -1 "$f")
-    if [[ "$first_line" != "---" ]]; then
-        bad_frontmatter+=("$f (no opening ---)")
-        continue
-    fi
-    fm_end=$(awk 'NR>1 && /^---$/{print NR; exit}' "$f")
-    if [[ -z "$fm_end" ]]; then
-        bad_frontmatter+=("$f (no closing ---)")
-        continue
-    fi
-    fm=$(sed -n "2,$((fm_end - 1))p" "$f")
-    for field in "${required_fields[@]}"; do
-        if ! echo "$fm" | grep -q "^${field}:"; then
-            missing_required+=("$f: missing $field")
-        fi
-    done
-done
+content_pages = []
+for root, _, files in os.walk("wiki"):
+    for name in files:
+        if not name.endswith(".md"):
+            continue
+        path = os.path.join(root, name)
+        base = os.path.basename(path)
+        if base in ("index.md", "log.md"):
+            continue
+        if path.startswith("wiki/meta/"):
+            continue
+        content_pages.append(path)
 
-n_pages=${#content_pages[@]}
-if [[ ${#bad_frontmatter[@]} -eq 0 && ${#missing_required[@]} -eq 0 ]]; then
-    if [[ "$n_pages" -eq 0 ]]; then
-        pass "no content pages yet (skeleton state)"
-    else
-        pass "all $n_pages content pages have valid frontmatter"
-    fi
+required_fields = ("id", "title", "type", "status", "topics", "created", "updated", "last_reviewed", "superseded_by")
+valid_types = {"entity", "concept", "source", "synthesis", "moc"}
+valid_status = {"stub", "draft", "stable", "superseded"}
+date_re = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+hash_re = re.compile(r"^[0-9a-f]{64}$")
+wikilink_re = re.compile(r"^\[\[[^\]]+\]\]$")
+
+def strip_quotes(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+def parse_value(raw):
+    raw = raw.strip()
+    if raw == "":
+        return ""
+    if raw == "null":
+        return None
+    if raw.startswith("[") and raw.endswith("]"):
+        try:
+            return ast.literal_eval(raw.replace("null", "None"))
+        except Exception:
+            return raw
+    if raw.startswith("- "):
+        items = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line.startswith("- "):
+                return raw
+            items.append(strip_quotes(line[2:].strip()))
+        return items
+    return strip_quotes(raw)
+
+def parse_frontmatter(block):
+    data = {}
+    current_key = None
+    current_lines = []
+    for line in block.splitlines():
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*:\s*", line):
+            if current_key is not None:
+                data[current_key] = parse_value("\n".join(current_lines))
+            key, rest = line.split(":", 1)
+            current_key = key.strip()
+            current_lines = [rest.strip()] if rest.strip() else []
+        else:
+            if current_key is not None:
+                current_lines.append(line)
+    if current_key is not None:
+        data[current_key] = parse_value("\n".join(current_lines))
+    return data
+
+problems = []
+
+for path in sorted(content_pages):
+    try:
+        with open(path) as f:
+            text = f.read()
+    except Exception as e:
+        problems.append(f"{path}: unreadable ({e})")
+        continue
+
+    if not text.startswith("---\n"):
+        problems.append(f"{path}: no opening ---")
+        continue
+
+    match = re.search(r"\n---\n", text[4:])
+    if not match:
+        problems.append(f"{path}: no closing ---")
+        continue
+
+    fm_end = 4 + match.start()
+    frontmatter = text[4:fm_end]
+    data = parse_frontmatter(frontmatter)
+
+    for field in required_fields:
+        if field not in data:
+            problems.append(f"{path}: missing {field}")
+
+    if any(p.startswith(f"{path}: missing") for p in problems):
+        continue
+
+    stem = os.path.splitext(os.path.basename(path))[0]
+    if data["id"] != stem:
+        problems.append(f"{path}: id '{data['id']}' does not match filename '{stem}'")
+
+    if data["type"] not in valid_types:
+        problems.append(f"{path}: invalid type '{data['type']}'")
+
+    if data["status"] not in valid_status:
+        problems.append(f"{path}: invalid status '{data['status']}'")
+
+    topics = data["topics"]
+    if not isinstance(topics, list) or len(topics) == 0 or not all(isinstance(t, str) and t.strip() for t in topics):
+        problems.append(f"{path}: topics must be a non-empty array of strings")
+
+    for field in ("created", "updated", "last_reviewed"):
+        if not isinstance(data[field], str) or not date_re.match(data[field]):
+            problems.append(f"{path}: {field} must be ISO date YYYY-MM-DD")
+
+    superseded_by = data["superseded_by"]
+    if data["status"] == "superseded":
+        if not isinstance(superseded_by, str) or not wikilink_re.match(superseded_by):
+            problems.append(f"{path}: status=superseded requires superseded_by='[[replacement-page]]'")
+    else:
+        if superseded_by is not None:
+            problems.append(f"{path}: superseded_by must be null unless status=superseded")
+
+    page_type = data["type"]
+    if page_type == "source":
+        source_ref = data.get("source_ref")
+        hash_value = data.get("hash")
+        if not isinstance(source_ref, str) or not source_ref.startswith("raw/"):
+            problems.append(f"{path}: source page must have source_ref under raw/")
+        elif not os.path.exists(source_ref):
+            problems.append(f"{path}: source_ref points to missing file {source_ref}")
+        if not isinstance(hash_value, str) or not hash_re.match(hash_value):
+            problems.append(f"{path}: source page hash must be 64 lowercase hex chars")
+    else:
+        if "sources" not in data:
+            problems.append(f"{path}: non-source page missing sources")
+        else:
+            sources = data["sources"]
+            if not isinstance(sources, list):
+                problems.append(f"{path}: sources must be an array")
+            else:
+                for src in sources:
+                    if not isinstance(src, str) or not src.startswith("raw/"):
+                        problems.append(f"{path}: sources entries must be raw/ paths")
+                        break
+                    if not os.path.exists(src):
+                        problems.append(f"{path}: sources references missing file {src}")
+                        break
+
+    if page_type == "synthesis":
+        question = data.get("question")
+        if not isinstance(question, str) or not question.strip():
+            problems.append(f"{path}: synthesis page must have non-empty question")
+
+if problems:
+    for problem in problems:
+        print(f"PROBLEM: {problem}")
+    print(f"FAIL: {len(problems)} schema issue(s)")
+else:
+    print(f"PASS: all {len(content_pages)} content pages have valid frontmatter and schema")
+PYEOF
+)
+
+if echo "$schema_result" | head -1 | grep -q "^PASS"; then
+    pass "$(echo "$schema_result" | head -1 | sed 's/^PASS: //')"
 else
-    for bf in "${bad_frontmatter[@]}"; do
-        fail "bad frontmatter: $bf"
-    done
-    for mr in "${missing_required[@]}"; do
-        fail "$mr"
-    done
+    while IFS= read -r line; do
+        if [[ "$line" == FAIL:* ]]; then
+            fail "${line#FAIL: }"
+        elif [[ "$line" == PROBLEM:* ]]; then
+            echo "      ${line#PROBLEM: }"
+        fi
+    done <<<"$schema_result"
 fi
 
 # ----------------------------------------------------------------------
@@ -411,6 +556,443 @@ else
             pass "kill-switch metric: $multi of $total shared entities ($pct%) linked from 2+ MOCs (type-first hybrid is working)"
         fi
     fi
+fi
+
+# ----------------------------------------------------------------------
+# Check 9: orphan pages
+# ----------------------------------------------------------------------
+section "Check 9: orphan pages"
+
+orphans_result=$(python3 - <<'PYEOF'
+import os
+import re
+
+content_pages = []
+for root, _, files in os.walk("wiki"):
+    for name in files:
+        if not name.endswith(".md"):
+            continue
+        path = os.path.join(root, name)
+        base = os.path.basename(path)
+        if base in ("index.md", "log.md"):
+            continue
+        if path.startswith("wiki/meta/"):
+            continue
+        content_pages.append(path)
+
+targets = {os.path.splitext(os.path.basename(path))[0]: path for path in content_pages}
+inbound = {target: 0 for target in targets}
+link_re = re.compile(r"\[\[([^\]]+)\]\]")
+
+for path in content_pages:
+    try:
+        with open(path) as f:
+            text = f.read()
+    except Exception:
+        continue
+    text = re.sub(r"\x60[^\x60]*\x60", "", text)
+    for match in link_re.finditer(text):
+        target = match.group(1).split("|", 1)[0].split("#", 1)[0].strip()
+        if target in targets and targets[target] != path:
+            inbound[target] += 1
+
+orphans = sorted(
+    target
+    for target, count in inbound.items()
+    if count == 0 and not targets[target].endswith("-moc.md")
+)
+if not orphans:
+    print(f"PASS: no orphan content pages ({len(content_pages)} pages checked)")
+else:
+    for orphan in orphans:
+        print(f"PROBLEM: {orphan}")
+    print(f"WARN: {len(orphans)} orphan page(s)")
+PYEOF
+)
+
+if echo "$orphans_result" | head -1 | grep -q "^PASS"; then
+    pass "$(echo "$orphans_result" | head -1 | sed 's/^PASS: //')"
+else
+    while IFS= read -r line; do
+        if [[ "$line" == WARN:* ]]; then
+            warn "${line#WARN: }"
+        elif [[ "$line" == PROBLEM:* ]]; then
+            echo "      ${line#PROBLEM: }"
+        fi
+    done <<<"$orphans_result"
+fi
+
+# ----------------------------------------------------------------------
+# Check 10: Stub-rot
+# ----------------------------------------------------------------------
+section "Check 10: stub-rot"
+
+stub_result=$(python3 - <<'PYEOF'
+import ast
+import datetime as dt
+import os
+import re
+
+def strip_quotes(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+def parse_value(raw):
+    raw = raw.strip()
+    if raw == "":
+        return ""
+    if raw == "null":
+        return None
+    if raw.startswith("[") and raw.endswith("]"):
+        try:
+            return ast.literal_eval(raw.replace("null", "None"))
+        except Exception:
+            return raw
+    if raw.startswith("- "):
+        items = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line.startswith("- "):
+                return raw
+            items.append(strip_quotes(line[2:].strip()))
+        return items
+    return strip_quotes(raw)
+
+def parse_frontmatter(path):
+    with open(path) as f:
+        text = f.read()
+    if not text.startswith("---\n"):
+        return {}
+    match = re.search(r"\n---\n", text[4:])
+    if not match:
+        return {}
+    block = text[4:4 + match.start()]
+    data = {}
+    current_key = None
+    current_lines = []
+    for line in block.splitlines():
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*:\s*", line):
+            if current_key is not None:
+                data[current_key] = parse_value("\n".join(current_lines))
+            key, rest = line.split(":", 1)
+            current_key = key.strip()
+            current_lines = [rest.strip()] if rest.strip() else []
+        elif current_key is not None:
+            current_lines.append(line)
+    if current_key is not None:
+        data[current_key] = parse_value("\n".join(current_lines))
+    return data
+
+today = dt.date.today()
+stubs = []
+for root, _, files in os.walk("wiki"):
+    for name in files:
+        if not name.endswith(".md"):
+            continue
+        path = os.path.join(root, name)
+        base = os.path.basename(path)
+        if base in ("index.md", "log.md") or path.startswith("wiki/meta/"):
+            continue
+        data = parse_frontmatter(path)
+        if data.get("status") != "stub":
+            continue
+        created = data.get("created")
+        try:
+            age_days = (today - dt.date.fromisoformat(created)).days
+        except Exception:
+            continue
+        if age_days > 30:
+            stubs.append(f"{path} ({age_days} days old)")
+
+if not stubs:
+    print("PASS: no stale stub pages")
+else:
+    for stub in stubs:
+        print(f"PROBLEM: {stub}")
+    print(f"WARN: {len(stubs)} stale stub page(s)")
+PYEOF
+)
+
+if echo "$stub_result" | head -1 | grep -q "^PASS"; then
+    pass "$(echo "$stub_result" | head -1 | sed 's/^PASS: //')"
+else
+    while IFS= read -r line; do
+        if [[ "$line" == WARN:* ]]; then
+            warn "${line#WARN: }"
+        elif [[ "$line" == PROBLEM:* ]]; then
+            echo "      ${line#PROBLEM: }"
+        fi
+    done <<<"$stub_result"
+fi
+
+# ----------------------------------------------------------------------
+# Check 11: stale last_reviewed
+# ----------------------------------------------------------------------
+section "Check 11: stale last_reviewed"
+
+stale_result=$(python3 - <<'PYEOF'
+import ast
+import datetime as dt
+import os
+import re
+
+def strip_quotes(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+def parse_value(raw):
+    raw = raw.strip()
+    if raw == "":
+        return ""
+    if raw == "null":
+        return None
+    if raw.startswith("[") and raw.endswith("]"):
+        try:
+            return ast.literal_eval(raw.replace("null", "None"))
+        except Exception:
+            return raw
+    if raw.startswith("- "):
+        items = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line.startswith("- "):
+                return raw
+            items.append(strip_quotes(line[2:].strip()))
+        return items
+    return strip_quotes(raw)
+
+def parse_frontmatter(path):
+    with open(path) as f:
+        text = f.read()
+    if not text.startswith("---\n"):
+        return {}
+    match = re.search(r"\n---\n", text[4:])
+    if not match:
+        return {}
+    block = text[4:4 + match.start()]
+    data = {}
+    current_key = None
+    current_lines = []
+    for line in block.splitlines():
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*:\s*", line):
+            if current_key is not None:
+                data[current_key] = parse_value("\n".join(current_lines))
+            key, rest = line.split(":", 1)
+            current_key = key.strip()
+            current_lines = [rest.strip()] if rest.strip() else []
+        elif current_key is not None:
+            current_lines.append(line)
+    if current_key is not None:
+        data[current_key] = parse_value("\n".join(current_lines))
+    return data
+
+today = dt.date.today()
+stale = []
+for root, _, files in os.walk("wiki"):
+    for name in files:
+        if not name.endswith(".md"):
+            continue
+        path = os.path.join(root, name)
+        base = os.path.basename(path)
+        if base in ("index.md", "log.md") or path.startswith("wiki/meta/"):
+            continue
+        data = parse_frontmatter(path)
+        reviewed = data.get("last_reviewed")
+        try:
+            age_days = (today - dt.date.fromisoformat(reviewed)).days
+        except Exception:
+            continue
+        if age_days > 60:
+            stale.append(f"{path} ({age_days} days since review)")
+
+if not stale:
+    print("PASS: no pages older than 60 days since last_reviewed")
+else:
+    for item in stale:
+        print(f"PROBLEM: {item}")
+    print(f"WARN: {len(stale)} stale page(s)")
+PYEOF
+)
+
+if echo "$stale_result" | head -1 | grep -q "^PASS"; then
+    pass "$(echo "$stale_result" | head -1 | sed 's/^PASS: //')"
+else
+    while IFS= read -r line; do
+        if [[ "$line" == WARN:* ]]; then
+            warn "${line#WARN: }"
+        elif [[ "$line" == PROBLEM:* ]]; then
+            echo "      ${line#PROBLEM: }"
+        fi
+    done <<<"$stale_result"
+fi
+
+# ----------------------------------------------------------------------
+# Check 12: Alias/title collisions
+# ----------------------------------------------------------------------
+section "Check 12: alias/title collisions"
+
+collision_result=$(python3 - <<'PYEOF'
+import ast
+import os
+import re
+
+def strip_quotes(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+def parse_value(raw):
+    raw = raw.strip()
+    if raw == "":
+        return ""
+    if raw == "null":
+        return None
+    if raw.startswith("[") and raw.endswith("]"):
+        try:
+            return ast.literal_eval(raw.replace("null", "None"))
+        except Exception:
+            return raw
+    if raw.startswith("- "):
+        items = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line.startswith("- "):
+                return raw
+            items.append(strip_quotes(line[2:].strip()))
+        return items
+    return strip_quotes(raw)
+
+def parse_frontmatter(path):
+    with open(path) as f:
+        text = f.read()
+    if not text.startswith("---\n"):
+        return {}
+    match = re.search(r"\n---\n", text[4:])
+    if not match:
+        return {}
+    block = text[4:4 + match.start()]
+    data = {}
+    current_key = None
+    current_lines = []
+    for line in block.splitlines():
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*:\s*", line):
+            if current_key is not None:
+                data[current_key] = parse_value("\n".join(current_lines))
+            key, rest = line.split(":", 1)
+            current_key = key.strip()
+            current_lines = [rest.strip()] if rest.strip() else []
+        elif current_key is not None:
+            current_lines.append(line)
+    if current_key is not None:
+        data[current_key] = parse_value("\n".join(current_lines))
+    return data
+
+values = {}
+for root, _, files in os.walk("wiki"):
+    for name in files:
+        if not name.endswith(".md"):
+            continue
+        path = os.path.join(root, name)
+        base = os.path.basename(path)
+        if base in ("index.md", "log.md") or path.startswith("wiki/meta/"):
+            continue
+        data = parse_frontmatter(path)
+        entries = []
+        title = data.get("title")
+        if isinstance(title, str) and title.strip():
+            entries.append(("title", title.strip().lower()))
+        aliases = data.get("aliases", [])
+        if isinstance(aliases, list):
+            for alias in aliases:
+                if isinstance(alias, str) and alias.strip():
+                    entries.append(("alias", alias.strip().lower()))
+        for kind, value in entries:
+            values.setdefault(value, []).append((path, kind))
+
+collisions = []
+for value, entries in sorted(values.items()):
+    pages = sorted({path for path, _ in entries})
+    if len(pages) >= 2:
+        details = ", ".join(f"{os.path.basename(path)} ({kind})" for path, kind in entries)
+        collisions.append(f"'{value}': {details}")
+
+if not collisions:
+    print("PASS: no alias/title collisions")
+else:
+    for collision in collisions:
+        print(f"PROBLEM: {collision}")
+    print(f"WARN: {len(collisions)} alias/title collision(s)")
+PYEOF
+)
+
+if echo "$collision_result" | head -1 | grep -q "^PASS"; then
+    pass "$(echo "$collision_result" | head -1 | sed 's/^PASS: //')"
+else
+    while IFS= read -r line; do
+        if [[ "$line" == WARN:* ]]; then
+            warn "${line#WARN: }"
+        elif [[ "$line" == PROBLEM:* ]]; then
+            echo "      ${line#PROBLEM: }"
+        fi
+    done <<<"$collision_result"
+fi
+
+# ----------------------------------------------------------------------
+# Check 13: query/synthesis health
+# ----------------------------------------------------------------------
+section "Check 13: query/synthesis health"
+
+query_result=$(python3 - <<'PYEOF'
+import os
+import re
+
+with open("wiki/log.md") as f:
+    log = f.read()
+
+ingest_count = len(re.findall(r"^## \[\d{4}-\d{2}-\d{2}\] ingest \|", log, re.MULTILINE))
+query_count = len(re.findall(r"^## \[\d{4}-\d{2}-\d{2}\] query \|", log, re.MULTILINE))
+synthesis_files = sorted(
+    name for name in os.listdir("wiki/synthesis")
+    if name.endswith(".md") and name != ".gitkeep"
+)
+
+filed_refs = re.findall(r"^- Filed as: \[\[([^\]]+)\]\]", log, re.MULTILINE)
+missing = []
+for ref in filed_refs:
+    expected = os.path.join("wiki", "synthesis", f"{ref}.md")
+    if not os.path.exists(expected):
+        missing.append(f"{ref} -> {expected}")
+
+if missing:
+    for item in missing:
+        print(f"PROBLEM: {item}")
+    print(f"FAIL: {len(missing)} filed query reference(s) point to missing synthesis pages")
+elif not synthesis_files and ingest_count >= 10:
+    print(f"WARN: synthesis directory empty after {ingest_count} ingests; query workflow may not be activating")
+elif not synthesis_files:
+    print(f"PASS: no synthesis pages yet ({ingest_count} ingests, {query_count} queries logged; threshold not reached)")
+else:
+    print(f"PASS: {len(synthesis_files)} synthesis page(s), {query_count} query log entries, all filed references resolve")
+PYEOF
+)
+
+if echo "$query_result" | head -1 | grep -q "^PASS"; then
+    pass "$(echo "$query_result" | head -1 | sed 's/^PASS: //')"
+elif echo "$query_result" | head -1 | grep -q "^WARN"; then
+    warn "$(echo "$query_result" | head -1 | sed 's/^WARN: //')"
+else
+    while IFS= read -r line; do
+        if [[ "$line" == FAIL:* ]]; then
+            fail "${line#FAIL: }"
+        elif [[ "$line" == PROBLEM:* ]]; then
+            echo "      ${line#PROBLEM: }"
+        fi
+    done <<<"$query_result"
 fi
 
 # ----------------------------------------------------------------------
