@@ -6,9 +6,10 @@ Skills are **harness-agnostic**: plain markdown + YAML, no vendor-specific front
 
 ## Catalog
 
+Session start (read order + preflight checks for lint cadence and inbox state) is handled inline by CLAUDE.md §8, not as a skill.
+
 | Skill | When it activates | File |
 |---|---|---|
-| **go** | Session start; User says "go", "begin", "start session" | [`go/SKILL.md`](go/SKILL.md) |
 | **ingest** | New file in `raw/`; User says "ingest", "process this source" | [`ingest/SKILL.md`](ingest/SKILL.md) |
 | **query** | Any domain question answerable from wiki content (implicit) | [`query/SKILL.md`](query/SKILL.md) |
 | **lint** | Every 5 ingests or 14 days; User says "lint", "health check" | [`lint/SKILL.md`](lint/SKILL.md) |

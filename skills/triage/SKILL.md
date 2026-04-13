@@ -116,4 +116,4 @@ The subsequent `ingest` commit for the RAG source is a separate atomic commit, n
 
 - **[ingest](../ingest/SKILL.md)** — chained after every promote decision to process the new `raw/` file into wiki pages.
 - **[migrate](../migrate/SKILL.md)** — if an extension requires renaming or merging a page, hand off to migrate rather than doing structural surgery inline.
-- **[go](../go/SKILL.md)** — the session-start skill checks the inbox state and surfaces a triage prompt if the inbox is non-empty.
+- **CLAUDE.md §8 (session-start preflight)** — the preflight check surfaces a triage prompt if the inbox is non-empty.

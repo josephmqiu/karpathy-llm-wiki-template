@@ -15,7 +15,7 @@ The LLM is the bookkeeper. You are the thinker.
 | [`CLAUDE.md`](CLAUDE.md) | The schema layer — identity, rules, frontmatter, naming, anti-patterns, and the skill catalog. Claude reads this every session. |
 | [`AGENTS.md`](AGENTS.md) | A thin pointer to `CLAUDE.md` for non-Claude agents. |
 | [`SETUP.md`](SETUP.md) | First-time setup guide — software, Obsidian plugins, getting started steps. |
-| [`skills/`](skills/) | Self-contained workflow procedures (`go`, `ingest`, `query`, `lint`, `triage`, `migrate`, `autoresearch`) as harness-agnostic `SKILL.md` files. |
+| [`skills/`](skills/) | Self-contained workflow procedures (`ingest`, `query`, `lint`, `triage`, `migrate`, `autoresearch`) as harness-agnostic `SKILL.md` files. |
 | `wiki/` | The LLM-maintained knowledge base (index, log, shared content, topic domains, synthesis) |
 | `raw/` | Immutable source documents — the LLM reads but never modifies these |
 | `inbox/` | Low-friction capture — drop messy notes here, triage later |
@@ -34,11 +34,12 @@ wiki/           ← the memory that survives any harness swap
 
 `CLAUDE.md` stays thin. Each workflow lives in its own `skills/<name>/SKILL.md` file that Claude loads on demand. Skill files are plain markdown + YAML — no vendor-specific frontmatter — so they port to any AI agent that can read markdown and follow numbered steps.
 
-## The seven skills
+## The six skills
+
+Session start is handled inline by CLAUDE.md §8 (read order + preflight checks) rather than as a separate skill — the checks are three greps and an `ls`, which didn't earn a dedicated `SKILL.md`.
 
 | Skill | What it does |
 |---|---|
-| **go** | Session start. Reads index → MOC, runs preflight checks (lint cadence, inbox state), surfaces prompts. Session-internal — does not log. |
 | **ingest** | Process a raw source into wiki pages. Hash check → read → discuss → write pages → update MOC/index/log/manifest → commit. |
 | **query** | Ask a question against the wiki. Reads index → MOC → pages → synthesizes an answer with citations, states a filing decision, logs the query, and can file the answer as a `wiki/synthesis/` page. |
 | **lint** | Health check. Tier 1 runs `verify-v1.sh`; Tier 2 is semantic (contradictions, concept gaps, missing cross-refs, coverage gaps, supersession). Reports findings, asks before fixing. |
@@ -286,13 +287,12 @@ run lint
 
 ## What you can ask Claude to do
 
-### The seven skills
+### The six skills
 
-Every workflow lives as a self-contained file at `skills/<name>/SKILL.md`. Claude loads the skill in full before executing its steps. The catalog in `CLAUDE.md §9` is the authoritative index; the table below is the user-facing summary.
+Every workflow lives as a self-contained file at `skills/<name>/SKILL.md`. Claude loads the skill in full before executing its steps. The catalog in `CLAUDE.md §9` is the authoritative index; the table below is the user-facing summary. Session start (read order + preflight) is handled inline by CLAUDE.md §8, not as a skill.
 
 | Skill      | What it does                                                                                                                                                                         | File |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --- |
-| **go**     | Session start. Reads index → MOC, runs preflight checks (lint cadence, inbox state), surfaces prompts. Session-internal — does not log. | [`skills/go/SKILL.md`](skills/go/SKILL.md) |
 | **ingest** | Process a raw source into wiki pages. Hash check → read → discuss → write pages → update MOC/index/log/manifest → commit. | [`skills/ingest/SKILL.md`](skills/ingest/SKILL.md) |
 | **query**  | Ask a question against the wiki. Reads index → MOC → pages → synthesizes an answer with citations, states a filing decision, logs the query, and can file the answer as a `wiki/synthesis/` page. | [`skills/query/SKILL.md`](skills/query/SKILL.md) |
 | **lint**   | Health check. Tier 1 runs `verify-v1.sh`; Tier 2 is semantic (contradictions, concept gaps, missing cross-refs, coverage gaps, supersession). Reports findings, asks before fixing. | [`skills/lint/SKILL.md`](skills/lint/SKILL.md) |

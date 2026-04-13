@@ -77,7 +77,7 @@ required_dirs=(
     "wiki" "wiki/shared/entities" "wiki/shared/concepts" "wiki/shared/sources"
     "wiki/domains" "wiki/synthesis" "wiki/meta"
     "scripts" "inbox"
-    "skills" "skills/go" "skills/ingest" "skills/query" "skills/lint" "skills/triage" "skills/migrate"
+    "skills" "skills/ingest" "skills/query" "skills/lint" "skills/triage" "skills/migrate"
     "skills/autoresearch" "skills/autoresearch/references"
 )
 missing_dirs=()
@@ -93,7 +93,7 @@ fi
 required_files=(
     "CLAUDE.md" "wiki/index.md" "wiki/log.md" "raw/.manifest.json" "wiki/meta/dashboard.md"
     "skills/README.md"
-    "skills/go/SKILL.md" "skills/ingest/SKILL.md" "skills/query/SKILL.md"
+    "skills/ingest/SKILL.md" "skills/query/SKILL.md"
     "skills/lint/SKILL.md" "skills/triage/SKILL.md" "skills/migrate/SKILL.md"
     "skills/autoresearch/SKILL.md" "skills/autoresearch/references/program.md"
     "wiki/meta/obsidian-formatting.md"

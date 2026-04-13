@@ -9,7 +9,7 @@ inputs:
   - name: question
     required: true
     description: "The question to answer, in User's words"
-related_skills: [ingest, lint, migrate, go]
+related_skills: [ingest, lint, migrate]
 created: 2026-04-13
 updated: 2026-04-13
 ---
@@ -172,4 +172,3 @@ Only when a synthesis is filed. Unfiled queries don't get commits; the log entry
 - **[ingest](../ingest/SKILL.md)** — upstream. Creates the pages that query reads from. An unanswerable query often surfaces a missing-source gap that `ingest` should fill.
 - **[lint](../lint/SKILL.md)** — downstream. The query/synthesis health check (Check 13) watches for filing decisions that point at missing synthesis pages; lint surfaces those as structural failures.
 - **[migrate](../migrate/SKILL.md)** — peer. If query discovers a duplicate or a disambiguation need while reading the graph, hand off to migrate.
-- **[go](../go/SKILL.md)** — upstream. The session-start skill loads the index and relevant MOC, which primes the read order this skill depends on.

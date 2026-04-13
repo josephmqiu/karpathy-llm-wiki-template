@@ -36,7 +36,7 @@ You (Claude) are the only agent authorized to modify `wiki/`. User writes raw so
 └─────────────────────────────────────────────────────────┘
 ┌─────────────────────────────────────────────────────────┐
 │  skills/                        ← PROCEDURES            │
-│  ingest, query, lint, triage, migrate, go, autoresearch.│
+│  ingest, query, lint, triage, migrate, autoresearch.    │
 │  Self-contained markdown files loaded on demand via     │
 │  the §9 skill catalog.                                  │
 └─────────────────────────────────────────────────────────┘
@@ -93,7 +93,6 @@ LLM-Wiki/
 │   └── assets/                     ← images / binaries referenced by sources
 ├── skills/                         ← fat-skills procedures
 │   ├── README.md                   ← catalog mirror + file template
-│   ├── go/SKILL.md                 ← session start + preflight
 │   ├── ingest/SKILL.md             ← process one raw source
 │   ├── query/SKILL.md              ← answer a question, optionally file synthesis
 │   ├── lint/SKILL.md               ← Tier 1 (verify-v1.sh) + Tier 2 (semantic)
@@ -246,19 +245,32 @@ Coverage is a **routing signal**, not a badge of honor. It tells future sessions
 
 ---
 
-## 8. Session start: read order
+## 8. Session start: read order + preflight
 
-When a new session begins, before answering any substantive question, read in this order:
+Before the **first domain-ish interaction** of a session — the first time User asks a wiki question, drops a raw source, runs triage, etc. — execute the read order and preflight below. For pure repo-maintenance sessions (editing CLAUDE.md, touching scripts, refactoring skills), skip it: reading wiki content would waste context. In doubt → run it.
+
+### Read order
 
 1. **`CLAUDE.md`** (this file) — already loaded
-2. **`wiki/index.md`** — the master catalog
-3. **`wiki/domains/<topic>/<topic>-moc.md`** — for the topic relevant to the question
-4. **Specific pages** — drill into the entities/concepts/sources the question touches
-5. **`wiki/log.md`** — only when disambiguation or recent history is needed (e.g., "what did we ingest last week?")
+2. **`wiki/index.md`** — the master catalog. Non-negotiable: skipping the index is the dominant source of duplicate pages.
+3. **`wiki/domains/<topic>/<topic>-moc.md`** — for the topic relevant to the question. If the topic is unclear, wait for the question before drilling in.
+4. **Specific pages** — drill into the entities/concepts/sources the question touches. Follow wikilinks outward from the MOC.
+5. **`wiki/log.md`** — only when disambiguation or recent history is needed. The preflight below uses it.
 
-DO NOT skip steps 2 and 3. Skipping the index/MOC means you'll miss existing pages and create duplicates.
+### Preflight checks
 
-The full session-start procedure — read order **plus** preflight checks (last lint age, ingests-since-last-lint, inbox state) — lives in `skills/go/SKILL.md`. Load that skill on session start and follow it; the read order above is the minimum schema the model needs to get to the skill catalog.
+Three greps and one `ls`. Surface prompts; do not auto-invoke downstream skills.
+
+6. **Last lint date.** Grep `wiki/log.md` for `^## \[.*\] lint \|`. If the most recent entry is more than **14 days** old, surface:
+   > Lint is overdue (last run: YYYY-MM-DD). Want me to run it before we start?
+
+7. **Ingests since last lint.** Count `ingest |` entries after the most recent `lint |` entry. If ≥ 5, surface:
+   > We've hit ingest N since the last lint — time for a scheduled health check. Want me to run lint before we start?
+
+8. **Inbox state.** `ls inbox/` (skip `.gitkeep`). If non-empty, surface:
+   > Inbox has N item(s) waiting: <filenames>. Want me to triage before we start?
+
+User decides whether to run `lint` / `triage`. If User declines, note the staleness in working context and proceed. This block does not log or commit — it's session-internal.
 
 ---
 
@@ -284,7 +296,6 @@ Every workflow lives in `skills/<name>/SKILL.md`. Load the skill file in full be
 
 | Skill | When it activates | Skill file |
 |---|---|---|
-| **go** | Session start; User says "go", "begin", "start session", "where are we" | `skills/go/SKILL.md` |
 | **ingest** | New file in `raw/`; User says "ingest", "process this source" | `skills/ingest/SKILL.md` |
 | **query** | Any domain question answerable from wiki content (implicit; no keyword needed) | `skills/query/SKILL.md` |
 | **lint** | Every 5 ingests since last lint; last lint >14 days old; User says "lint", "health check" | `skills/lint/SKILL.md` |
@@ -317,7 +328,7 @@ Format:
 - with details about what changed
 ```
 
-Operations: `init`, `ingest`, `query`, `lint`, `triage`, `migrate`, `research`. Each corresponds to exactly one skill in §9 (except `init`, which is bootstrap-only). The `go` skill is session-internal and does not log. The `research` op (from `autoresearch`) produces one summary log entry per run in addition to the per-source `ingest` entries from its Phase D hand-off.
+Operations: `init`, `ingest`, `query`, `lint`, `triage`, `migrate`, `research`. Each corresponds to exactly one skill in §9 (except `init`, which is bootstrap-only). Session-start read order + preflight (§8) is session-internal and does not log. The `research` op (from `autoresearch`) produces one summary log entry per run in addition to the per-source `ingest` entries from its Phase D hand-off.
 
 ---
 
@@ -328,7 +339,7 @@ Things NOT to do:
 - ❌ **Modifying files in `raw/`.** They are immutable. Add wiki pages to correct/contextualize, never edit the source.
 - ❌ **Auto-ingesting without discussing takeaways.** Always sync with User first.
 - ❌ **Creating duplicate entities** (e.g., `karpathy.md` AND `andrej-karpathy.md`). Check existing entities first; use `aliases` for variants.
-- ❌ **Skipping the log.** Every operation gets a log entry (except `go`, which is session-internal).
+- ❌ **Skipping the log.** Every operation gets a log entry. (Session-start read order + preflight is session-internal and does not log.)
 - ❌ **Forcing 10–15 page touches early.** First 10 ingests should be 4–8. Don't fabricate pages just to hit a number.
 - ❌ **Naive whole-document ingest of long sources.** Books, long transcripts, and large reports should usually be split to chapter/section-level first.
 - ❌ **Filing everything as a synthesis.** Most query answers are one-offs. Only file recurring or novel syntheses.

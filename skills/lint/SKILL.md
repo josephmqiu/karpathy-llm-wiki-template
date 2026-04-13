@@ -140,4 +140,4 @@ The key move: disagreement between two sources is a `## Disputed` section on the
 - **[ingest](../ingest/SKILL.md)** — upstream. Every 5 ingests triggers a lint. Ingest writes the log entries lint reads to compute cadence.
 - **[query](../query/SKILL.md)** — peer. Lint's Tier 2 semantic checks often surface "this question has no sources" gaps that `query` can answer by re-reading, or that `ingest` can fix with a new source.
 - **[migrate](../migrate/SKILL.md)** — downstream. Lint findings like "duplicate entity" or "alias collision" hand off to migrate for the actual rename/merge.
-- **[go](../go/SKILL.md)** — upstream. The session-start preflight checks the last lint date and ingests-since-last-lint, and prompts to run this skill when either threshold fires.
+- **CLAUDE.md §8 (session-start preflight)** — upstream. The preflight checks the last lint date and ingests-since-last-lint and prompts to run this skill when either threshold fires.

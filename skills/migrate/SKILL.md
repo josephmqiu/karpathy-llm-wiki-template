@@ -245,4 +245,3 @@ Examples: `migrate: merge karpathy → andrej-karpathy`, `migrate: rename foo-ba
 - **[lint](../lint/SKILL.md)** — upstream. Surfaces duplicates (alias/title collisions, duplicate entities) that trigger migrate.
 - **[ingest](../ingest/SKILL.md)** — upstream. When ingest discovers it's about to create a duplicate, it aborts and hands to migrate.
 - **[query](../query/SKILL.md)** — downstream. After migrate, queries should find the canonical page via aliases. If they don't, the aliases are wrong.
-- **[go](../go/SKILL.md)** — peer. The session-start skill will notice migrate commits in recent log entries and may prompt to run `lint` to check for residual graph damage.
