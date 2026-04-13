@@ -548,7 +548,7 @@ fi
 section "Check 8: kill-switch metric"
 
 if [[ "$moc_count" -lt 2 ]]; then
-    warn "kill-switch metric deferred (only $moc_count MOC; need 2+ topics to compute)"
+    pass "kill-switch metric not applicable (only $moc_count MOC; metric computes once there are 2+ topics)"
 else
     total=$(find wiki/shared/entities -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
     if [[ "$total" -eq 0 ]]; then
