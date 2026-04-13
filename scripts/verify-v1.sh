@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# verify-v1.sh — User's LLM Wiki integrity checks
+# verify-v1.sh — LLM Wiki integrity checks
 #
 # Run from anywhere; the script changes to the vault root automatically.
 # Exit codes: 0 = pass (or pass-with-warnings), 1 = fail
 #
 # Checks:
-#   1. Folder structure (required directories + files exist)
+#   1. Folder structure (required directories + files exist, including skills/)
 #   2. YAML frontmatter on wiki content pages (parseable + required fields)
 #   3. Dead wikilink detection
 #   4. Manifest reconciliation (raw/ files <-> raw/.manifest.json)
@@ -18,6 +18,9 @@
 #  11. Stale last_reviewed dates (>60 days old)
 #  12. Alias/title collisions
 #  13. Query/synthesis health
+#  14. Skill catalog sync (CLAUDE.md §9 table <-> skills/ directory)
+#  15. Skill frontmatter well-formed (required fields, id matches dir)
+#  16. Log-op coverage (skill log_op values <-> CLAUDE.md §10 op tokens)
 #
 # Requires: bash, python3 (stdlib only), grep, find, awk, sed, sort.
 
@@ -74,6 +77,8 @@ required_dirs=(
     "wiki" "wiki/shared/entities" "wiki/shared/concepts" "wiki/shared/sources"
     "wiki/domains" "wiki/synthesis" "wiki/meta"
     "scripts" "inbox"
+    "skills" "skills/go" "skills/ingest" "skills/query" "skills/lint" "skills/triage" "skills/migrate"
+    "skills/autoresearch" "skills/autoresearch/references"
 )
 missing_dirs=()
 for dir in "${required_dirs[@]}"; do
@@ -85,7 +90,14 @@ else
     fail "missing folders: ${missing_dirs[*]}"
 fi
 
-required_files=("CLAUDE.md" "wiki/index.md" "wiki/log.md" "raw/.manifest.json" "wiki/meta/dashboard.md")
+required_files=(
+    "CLAUDE.md" "wiki/index.md" "wiki/log.md" "raw/.manifest.json" "wiki/meta/dashboard.md"
+    "skills/README.md"
+    "skills/go/SKILL.md" "skills/ingest/SKILL.md" "skills/query/SKILL.md"
+    "skills/lint/SKILL.md" "skills/triage/SKILL.md" "skills/migrate/SKILL.md"
+    "skills/autoresearch/SKILL.md" "skills/autoresearch/references/program.md"
+    "wiki/meta/obsidian-formatting.md"
+)
 missing_files=()
 for f in "${required_files[@]}"; do
     [[ -f "$f" ]] || missing_files+=("$f")
@@ -351,7 +363,7 @@ for m in re.finditer(r"\[\[([^\]|#]+)", text):
             dead_links+=("$file_part:$line_part [[$link]]")
         fi
     done <<<"$extracted"
-done < <(grep -rn '\[\[' wiki/ 2>/dev/null | grep -v '^Binary')
+done < <(grep -rn '\[\[' wiki/ 2>/dev/null | grep -v '^Binary' | grep -v '^wiki/meta/')
 
 if [[ ${#dead_links[@]} -eq 0 ]]; then
     pass "no dead wikilinks ($total_links total wikilinks checked)"
@@ -993,6 +1005,337 @@ else
             echo "      ${line#PROBLEM: }"
         fi
     done <<<"$query_result"
+fi
+
+# ----------------------------------------------------------------------
+# Check 14: skill catalog sync (CLAUDE.md §9 table <-> skills/ directory)
+# ----------------------------------------------------------------------
+section "Check 14: skill catalog sync"
+
+catalog_result=$(python3 - <<'PYEOF'
+import os
+import re
+
+with open("CLAUDE.md") as f:
+    claude = f.read()
+
+# Extract §9 Skill catalog section (from "## 9. Skill catalog" to the next "## " heading)
+section_match = re.search(
+    r"^## 9\. Skill catalog\s*$(.*?)^## ",
+    claude,
+    re.MULTILINE | re.DOTALL,
+)
+if not section_match:
+    print("PROBLEM: CLAUDE.md §9 Skill catalog section not found")
+    print("FAIL: catalog section missing")
+    raise SystemExit
+
+section_text = section_match.group(1)
+
+# Catalog rows look like: | **<name>** | <trigger desc> | `skills/<name>/SKILL.md` |
+catalog_entries = re.findall(
+    r"\|\s*\*\*([a-z][a-z0-9_-]*)\*\*\s*\|[^|]*\|\s*`(skills/[a-z][a-z0-9_-]*/SKILL\.md)`\s*\|",
+    section_text,
+)
+
+if not catalog_entries:
+    print("PROBLEM: no catalog rows parsed from CLAUDE.md §9")
+    print("FAIL: catalog empty or malformed")
+    raise SystemExit
+
+# Scan skills/ for actual SKILL.md files
+skill_dirs = []
+for name in sorted(os.listdir("skills")):
+    full = os.path.join("skills", name)
+    if not os.path.isdir(full):
+        continue
+    if os.path.isfile(os.path.join(full, "SKILL.md")):
+        skill_dirs.append(name)
+
+catalog_names = {name for name, _ in catalog_entries}
+
+missing_files = [
+    (name, path) for name, path in catalog_entries
+    if not os.path.isfile(path)
+]
+missing_rows = [name for name in skill_dirs if name not in catalog_names]
+mismatched_paths = [
+    (name, path) for name, path in catalog_entries
+    if path != f"skills/{name}/SKILL.md"
+]
+
+problems = bool(missing_files or missing_rows or mismatched_paths)
+
+if missing_files:
+    for name, path in missing_files:
+        print(f"PROBLEM: catalog row '{name}' points to missing file {path}")
+if missing_rows:
+    for name in missing_rows:
+        print(f"PROBLEM: skills/{name}/SKILL.md exists but has no row in CLAUDE.md §9")
+if mismatched_paths:
+    for name, path in mismatched_paths:
+        print(f"PROBLEM: catalog row '{name}' declares path {path} (expected skills/{name}/SKILL.md)")
+
+if problems:
+    print(f"FAIL: skill catalog out of sync ({len(missing_files)} missing files, {len(missing_rows)} missing rows, {len(mismatched_paths)} mismatched paths)")
+else:
+    print(f"PASS: {len(catalog_entries)} skill(s) in CLAUDE.md §9 match skills/ directory 1:1")
+PYEOF
+)
+
+if echo "$catalog_result" | tail -1 | grep -q "^PASS"; then
+    pass "$(echo "$catalog_result" | tail -1 | sed 's/^PASS: //')"
+else
+    while IFS= read -r line; do
+        if [[ "$line" == FAIL:* ]]; then
+            fail "${line#FAIL: }"
+        elif [[ "$line" == PROBLEM:* ]]; then
+            echo "      ${line#PROBLEM: }"
+        fi
+    done <<<"$catalog_result"
+fi
+
+# ----------------------------------------------------------------------
+# Check 15: skill frontmatter well-formed
+# ----------------------------------------------------------------------
+section "Check 15: skill frontmatter well-formed"
+
+skill_fm_result=$(python3 - <<'PYEOF'
+import os
+import re
+
+def strip_quotes(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+def parse_skill_frontmatter(path):
+    """
+    Minimal skill frontmatter parser. Returns a dict of top-level keys.
+    Complex values (inline lists, nested objects) are captured as raw
+    strings — we only check field presence and simple scalar fields.
+    """
+    with open(path) as f:
+        text = f.read()
+    if not text.startswith("---\n"):
+        return None
+    end = re.search(r"\n---\n", text[4:])
+    if not end:
+        return None
+    block = text[4:4 + end.start()]
+    data = {}
+    current_key = None
+    current_lines = []
+    for line in block.splitlines():
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*:\s*", line):
+            if current_key is not None:
+                joined = "\n".join(current_lines).strip()
+                if joined == "null":
+                    data[current_key] = None
+                elif joined == "":
+                    data[current_key] = ""
+                else:
+                    data[current_key] = strip_quotes(joined) if "\n" not in joined else joined
+            key, rest = line.split(":", 1)
+            current_key = key.strip()
+            current_lines = [rest.strip()] if rest.strip() else []
+        elif current_key is not None:
+            current_lines.append(line)
+    if current_key is not None:
+        joined = "\n".join(current_lines).strip()
+        if joined == "null":
+            data[current_key] = None
+        elif joined == "":
+            data[current_key] = ""
+        else:
+            data[current_key] = strip_quotes(joined) if "\n" not in joined else joined
+    return data
+
+REQUIRED = ["id", "name", "title", "version", "status", "log_op", "inputs", "related_skills", "created", "updated"]
+VALID_STATUS = {"draft", "stable", "deprecated"}
+
+problems = []
+skill_count = 0
+
+for entry in sorted(os.listdir("skills")):
+    skill_path = os.path.join("skills", entry, "SKILL.md")
+    if not os.path.isfile(skill_path):
+        continue
+    skill_count += 1
+
+    data = parse_skill_frontmatter(skill_path)
+    if data is None:
+        problems.append(f"{skill_path}: missing or malformed YAML frontmatter")
+        continue
+
+    for field in REQUIRED:
+        if field not in data:
+            problems.append(f"{skill_path}: missing required field '{field}'")
+
+    id_value = data.get("id")
+    if isinstance(id_value, str) and id_value != entry:
+        problems.append(f"{skill_path}: id '{id_value}' does not match directory name '{entry}'")
+
+    name_value = data.get("name")
+    if isinstance(name_value, str) and name_value != entry:
+        problems.append(f"{skill_path}: name '{name_value}' does not match directory name '{entry}'")
+
+    status = data.get("status")
+    if isinstance(status, str) and status not in VALID_STATUS:
+        problems.append(f"{skill_path}: status '{status}' must be one of {sorted(VALID_STATUS)}")
+
+    version = data.get("version")
+    if isinstance(version, str) and version != "":
+        if not re.fullmatch(r"\d+", version):
+            problems.append(f"{skill_path}: version '{version}' must be an integer")
+
+    log_op = data.get("log_op")
+    if log_op is not None and not isinstance(log_op, str):
+        problems.append(f"{skill_path}: log_op must be a string or null")
+
+if skill_count == 0:
+    print("PROBLEM: no SKILL.md files found under skills/")
+    print("FAIL: no skills to validate")
+elif problems:
+    for problem in problems:
+        print(f"PROBLEM: {problem}")
+    print(f"FAIL: {len(problems)} skill frontmatter problem(s) across {skill_count} skill file(s)")
+else:
+    print(f"PASS: {skill_count} skill file(s) have well-formed frontmatter")
+PYEOF
+)
+
+if echo "$skill_fm_result" | tail -1 | grep -q "^PASS"; then
+    pass "$(echo "$skill_fm_result" | tail -1 | sed 's/^PASS: //')"
+else
+    while IFS= read -r line; do
+        if [[ "$line" == FAIL:* ]]; then
+            fail "${line#FAIL: }"
+        elif [[ "$line" == PROBLEM:* ]]; then
+            echo "      ${line#PROBLEM: }"
+        fi
+    done <<<"$skill_fm_result"
+fi
+
+# ----------------------------------------------------------------------
+# Check 16: log-op coverage (skills <-> CLAUDE.md §10 op tokens)
+# ----------------------------------------------------------------------
+section "Check 16: log-op coverage"
+
+logop_result=$(python3 - <<'PYEOF'
+import os
+import re
+
+def strip_quotes(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+def get_log_op(path):
+    """Extract only the log_op field from a skill frontmatter. Returns string, None, or 'MISSING'."""
+    with open(path) as f:
+        text = f.read()
+    if not text.startswith("---\n"):
+        return "MISSING"
+    end = re.search(r"\n---\n", text[4:])
+    if not end:
+        return "MISSING"
+    block = text[4:4 + end.start()]
+    match = re.search(r"^log_op:\s*(.*)$", block, re.MULTILINE)
+    if not match:
+        return "MISSING"
+    raw = match.group(1).strip()
+    if raw == "null" or raw == "":
+        return None
+    return strip_quotes(raw)
+
+# Parse CLAUDE.md for the declared operations in the Log format section.
+with open("CLAUDE.md") as f:
+    claude = f.read()
+
+ops_line = re.search(r"Operations:\s*((?:`\w+`(?:,\s*)?)+)", claude)
+if not ops_line:
+    print("PROBLEM: could not find Operations: line in CLAUDE.md")
+    print("FAIL: log format section missing or malformed")
+    raise SystemExit
+
+declared_ops = set(re.findall(r"`(\w+)`", ops_line.group(1)))
+
+# Bootstrap-only ops don't need a skill
+BOOTSTRAP_OPS = {"init"}
+
+# Parse skill log_op values
+skill_ops = {}
+missing_log_op = []
+for entry in sorted(os.listdir("skills")):
+    skill_path = os.path.join("skills", entry, "SKILL.md")
+    if not os.path.isfile(skill_path):
+        continue
+    op = get_log_op(skill_path)
+    if op == "MISSING":
+        missing_log_op.append(entry)
+    else:
+        skill_ops[entry] = op
+
+non_null_skill_ops = {op for op in skill_ops.values() if op}
+
+# Every skill's log_op must be in the declared ops (unless null for session-internal)
+unknown_skill_ops = sorted(non_null_skill_ops - declared_ops)
+
+# Every declared op (except bootstrap) must have a skill claiming it
+uncovered_ops = sorted((declared_ops - non_null_skill_ops) - BOOTSTRAP_OPS)
+
+# Check historical log entries for each skill (warn, not fail, if zero)
+with open("wiki/log.md") as f:
+    log = f.read()
+
+skills_never_logged = []
+for skill_name, op in sorted(skill_ops.items()):
+    if not op:
+        continue
+    count = len(re.findall(rf"^## \[\d{{4}}-\d{{2}}-\d{{2}}\] {re.escape(op)} \|", log, re.MULTILINE))
+    if count == 0:
+        skills_never_logged.append(skill_name)
+
+problems = bool(unknown_skill_ops or uncovered_ops or missing_log_op)
+
+if missing_log_op:
+    for name in missing_log_op:
+        print(f"PROBLEM: skills/{name}/SKILL.md has no log_op field (use 'null' for session-internal skills)")
+if unknown_skill_ops:
+    for op in unknown_skill_ops:
+        offenders = sorted(n for n, o in skill_ops.items() if o == op)
+        print(f"PROBLEM: skill(s) {offenders} declare log_op '{op}' which is not in CLAUDE.md §10 Operations")
+if uncovered_ops:
+    for op in uncovered_ops:
+        print(f"PROBLEM: CLAUDE.md §10 declares op '{op}' but no skill has log_op: {op}")
+
+if problems:
+    print(f"FAIL: log-op coverage mismatch ({len(unknown_skill_ops)} unknown, {len(uncovered_ops)} uncovered, {len(missing_log_op)} missing)")
+else:
+    summary_parts = [
+        f"{len(declared_ops)} declared op(s)",
+        f"{len(non_null_skill_ops)} covered by skills",
+        f"{len(BOOTSTRAP_OPS)} bootstrap",
+    ]
+    if skills_never_logged:
+        summary_parts.append(f"new (no log entries yet): {', '.join(skills_never_logged)}")
+    print(f"PASS: {'; '.join(summary_parts)}")
+PYEOF
+)
+
+if echo "$logop_result" | tail -1 | grep -q "^PASS"; then
+    pass "$(echo "$logop_result" | tail -1 | sed 's/^PASS: //')"
+else
+    while IFS= read -r line; do
+        if [[ "$line" == FAIL:* ]]; then
+            fail "${line#FAIL: }"
+        elif [[ "$line" == PROBLEM:* ]]; then
+            echo "      ${line#PROBLEM: }"
+        fi
+    done <<<"$logop_result"
 fi
 
 # ----------------------------------------------------------------------

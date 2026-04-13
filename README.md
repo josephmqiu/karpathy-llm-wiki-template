@@ -12,8 +12,10 @@ The LLM is the bookkeeper. You are the thinker.
 
 | Component | Purpose |
 |---|---|
-| [`CLAUDE.md`](CLAUDE.md) | The full schema — rules, workflows, conventions. Claude reads this every session. |
+| [`CLAUDE.md`](CLAUDE.md) | The schema layer — identity, rules, frontmatter, naming, anti-patterns, and the skill catalog. Claude reads this every session. |
+| [`AGENTS.md`](AGENTS.md) | A thin pointer to `CLAUDE.md` for non-Claude agents. |
 | [`SETUP.md`](SETUP.md) | First-time setup guide — software, Obsidian plugins, getting started steps. |
+| [`skills/`](skills/) | Self-contained workflow procedures (`go`, `ingest`, `query`, `lint`, `triage`, `migrate`, `autoresearch`) as harness-agnostic `SKILL.md` files. |
 | `wiki/` | The LLM-maintained knowledge base (index, log, shared content, topic domains, synthesis) |
 | `raw/` | Immutable source documents — the LLM reads but never modifies these |
 | `inbox/` | Low-friction capture — drop messy notes here, triage later |
@@ -21,14 +23,28 @@ The LLM is the bookkeeper. You are the thinker.
 
 The template ships with two pre-ingested example sources (Karpathy's original gist + a community research synthesis) so you can see the pattern in action before adding your own content.
 
-## Four operations
+## Architecture: thin harness, fat skills
 
-| Operation | What it does |
+```
+CLAUDE.md       ← schema layer (identity, rules, catalog)
+skills/         ← fat-skills layer (one SKILL.md per workflow)
+scripts/ + raw/ ← application layer (deterministic, pure)
+wiki/           ← the memory that survives any harness swap
+```
+
+`CLAUDE.md` stays thin. Each workflow lives in its own `skills/<name>/SKILL.md` file that Claude loads on demand. Skill files are plain markdown + YAML — no vendor-specific frontmatter — so they port to any AI agent that can read markdown and follow numbered steps.
+
+## The seven skills
+
+| Skill | What it does |
 |---|---|
-| **ingest** | Process a raw source into wiki pages. Hash check, read, discuss with you, write pages, update cross-references, commit. |
-| **query** | Ask a question against the wiki. The LLM reads the index, drills into relevant pages, synthesizes an answer with citations, states a filing decision, and can file good answers back as synthesis pages. |
-| **lint** | Health check — schema drift, orphan pages, naming collisions, stale content, contradictions, and coverage gaps. Reports findings, asks before fixing. |
-| **triage** | Process the inbox. Each item gets promoted to a source (then ingested), folded into an existing page, or discarded. |
+| **go** | Session start. Reads index → MOC, runs preflight checks (lint cadence, inbox state), surfaces prompts. Session-internal — does not log. |
+| **ingest** | Process a raw source into wiki pages. Hash check → read → discuss → write pages → update MOC/index/log/manifest → commit. |
+| **query** | Ask a question against the wiki. Reads index → MOC → pages → synthesizes an answer with citations, states a filing decision, logs the query, and can file the answer as a `wiki/synthesis/` page. |
+| **lint** | Health check. Tier 1 runs `verify-v1.sh`; Tier 2 is semantic (contradictions, concept gaps, missing cross-refs, coverage gaps, supersession). Reports findings, asks before fixing. |
+| **triage** | Process `inbox/` items. For each: promote to source (→ `ingest`), extend an existing page, or discard. |
+| **migrate** | Structural page-identity operations: merge duplicates, rename, disambiguate. Page identity is never changed inside another skill — migrate owns it. |
+| **autoresearch** | Iterative web research loop with a mandatory human checkpoint between research and filing. Captures sources into `raw/`, then hands off to `ingest`. |
 
 ## Quick start
 
@@ -46,7 +62,7 @@ See [`SETUP.md`](SETUP.md) for full setup instructions including Obsidian plugin
 
 Plain-English guide to using this vault day to day.
 
-If you want the system rules Claude follows, read [`CLAUDE.md`](CLAUDE.md). This section is the practical version: what goes where, what to ask, and what not to touch.
+If you want the system rules Claude follows, read [`CLAUDE.md`](CLAUDE.md) and the individual `skills/<name>/SKILL.md` files. This section is the practical version: what goes where, what to ask, and what not to touch.
 
 ---
 
@@ -56,7 +72,7 @@ If you just opened the vault and want to get oriented:
 
 1. Open [[dashboard]] to see recent activity and summary tables.
 2. Open [[llm-wiki-moc|the llm-wiki MOC]] to browse the main topic from the top.
-3. Follow a few links: [[llm-wiki-pattern]] -> [[andrej-karpathy]] -> [[karpathy-llm-wiki-gist]].
+3. Follow a few links: [[llm-wiki-pattern]] → [[andrej-karpathy]] → [[karpathy-llm-wiki-gist]].
 4. Ask Claude a simple question about the topic.
 
 The goal is not to memorize the structure. The goal is to know the few moves you actually use.
@@ -92,11 +108,11 @@ Two important rules:
 Start Claude from the vault root:
 
 ```sh
-cd /path/to/LLM-Wiki
+cd /path/to/my-wiki
 claude
 ```
 
-If the vault moves later, only the `cd` path changes. The important part is that you start in the folder containing `CLAUDE.md`, `raw/`, `wiki/`, and `scripts/`.
+If the vault moves later, only the `cd` path changes. The important part is that you start in the folder containing `CLAUDE.md`, `raw/`, `wiki/`, `skills/`, and `scripts/`.
 
 Once Claude is open, just talk to it directly:
 
@@ -108,7 +124,7 @@ run lint
 the memex page gets one point backwards - fix it
 ```
 
-You do not need to remind Claude how the vault works. That behavior lives in `CLAUDE.md`.
+You do not need to remind Claude how the vault works. The schema + rules + catalog live in `CLAUDE.md`, and each workflow lives in its own `skills/<name>/SKILL.md` file. Claude loads whatever it needs.
 
 ---
 
@@ -266,37 +282,37 @@ run lint
 
 `lint` is the broader Claude workflow. It runs the verifier and then looks for semantic issues like contradictions, concept gaps, missing cross-references, supersession candidates, and source coverage gaps. Claude should report findings and ask before fixing anything.
 
-Current expected verifier result in this vault:
-
-- 14 passed
-- 1 warning
-- 0 failed
-
-The warning is expected right now because there is only one topic MOC.
-
 ---
 
 ## What you can ask Claude to do
 
-### The four workflows
+### The seven skills
 
-| Command | What it does |
-|---|---|
-| **ingest** | Process a raw source into wiki pages. Hash check → read → discuss → write pages → update MOC/index/log/manifest → commit. |
-| **query** | Ask a question against the wiki. Reads index → MOC → pages → synthesizes an answer with citations, states a filing decision, logs the query, and can file the answer as a `wiki/synthesis/` page. |
-| **lint** | Health check. Runs `verify-v1.sh` + semantic checks (contradictions, concept gaps, missing cross-references, coverage gaps, supersession). Reports findings, asks before fixing. |
-| **triage** | Process `inbox/` items. For each: promote to source (→ ingest), extend an existing page, or discard. |
+Every workflow lives as a self-contained file at `skills/<name>/SKILL.md`. Claude loads the skill in full before executing its steps. The catalog in `CLAUDE.md §9` is the authoritative index; the table below is the user-facing summary.
 
-### Structural operations
+| Skill      | What it does                                                                                                                                                                         | File |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --- |
+| **go**     | Session start. Reads index → MOC, runs preflight checks (lint cadence, inbox state), surfaces prompts. Session-internal — does not log. | [`skills/go/SKILL.md`](skills/go/SKILL.md) |
+| **ingest** | Process a raw source into wiki pages. Hash check → read → discuss → write pages → update MOC/index/log/manifest → commit. | [`skills/ingest/SKILL.md`](skills/ingest/SKILL.md) |
+| **query**  | Ask a question against the wiki. Reads index → MOC → pages → synthesizes an answer with citations, states a filing decision, logs the query, and can file the answer as a `wiki/synthesis/` page. | [`skills/query/SKILL.md`](skills/query/SKILL.md) |
+| **lint**   | Health check. Tier 1 runs `verify-v1.sh`; Tier 2 is semantic (contradictions, concept gaps, missing cross-refs, coverage gaps, supersession). Reports findings, asks before fixing. | [`skills/lint/SKILL.md`](skills/lint/SKILL.md) |
+| **triage** | Process `inbox/` items. For each: promote to source (→ `ingest`), extend an existing page, or discard. | [`skills/triage/SKILL.md`](skills/triage/SKILL.md) |
+| **migrate**| Structural page-identity operations: merge duplicates, rename, disambiguate. Page identity is never changed inside another skill — migrate owns it. | [`skills/migrate/SKILL.md`](skills/migrate/SKILL.md) |
+| **autoresearch** | Iterative web research loop with a mandatory human checkpoint between research and filing. Captures sources into `raw/`, then hands off to `ingest`. | [`skills/autoresearch/SKILL.md`](skills/autoresearch/SKILL.md) |
 
-| Command | What it does |
+### Structural sub-operations (modes of `migrate`)
+
+These are all modes of the `migrate` skill, not separate workflows. They share the same underlying substrate — update files, rewrite backlinks, update index, log as `migrate`.
+
+| Mode | What it does |
 |---|---|
 | **merge** | Combine two duplicate pages into one canonical page. Rewrites backlinks, updates aliases. |
 | **rename** | Rename a page. Updates all backlinks vault-wide. |
-| **disambiguate** | Split one page into two (e.g., `attention.md` → `attention-ml.md` + `attention-cognition.md`). |
-| **fix / correct** | Edit a specific claim or typo in a page. Bumps `updated`, re-verifies. |
+| **disambiguate** | Split one page into two or more (e.g., `attention.md` → `attention-ml.md` + `attention-cognition.md`). |
 
-You can also just ask things in plain English — *"what does the wiki say about X?"*, *"compare sources A and B"*, *"show me all stub pages"*, *"undo the last ingest"*. For domain questions, that is still the `query` workflow even if you do not use the word "query."
+Small inline edits (fix a typo, correct a claim) are not a skill — they're just editing. Bump `updated`, re-run `verify-v1.sh` if the change matters.
+
+You can also just ask things in plain English — *"what does the wiki say about X?"*, *"compare sources A and B"*, *"show me all stub pages"*, *"undo the last ingest"*. For domain questions, that is still the `query` skill even if you do not use the word "query."
 
 ---
 
@@ -304,7 +320,7 @@ You can also just ask things in plain English — *"what does the wiki say about
 
 You do not need the jargon to use the system, but these terms come up a lot:
 
-- **MOC**: "Map of Content." A topic hub page. In this vault the main one is [[llm-wiki-moc]].
+- **MOC**: "Map of Content." A topic hub page. In the starter template the main one is [[llm-wiki-moc]].
 - **Ingest**: Turn one raw source into maintained wiki knowledge.
 - **Triage**: Process the inbox and decide what each item should become.
 - **Synthesis**: A saved answer that combines multiple pages into one reusable explanation.
@@ -318,7 +334,7 @@ You do not need the jargon to use the system, but these terms come up a lot:
 Safe to edit yourself:
 
 - files in `inbox/`
-- wording in `wiki/meta/` docs like this one
+- wording in `wiki/meta/` docs
 - small typo fixes in wiki pages, if you really want to do them by hand
 
 Things to be careful with:
@@ -330,11 +346,13 @@ Do not edit directly:
 
 - files in `raw/` after they are stored there
 - `CLAUDE.md` casually
+- `skills/*/SKILL.md` casually
 
 Why:
 
 - `raw/` is the source-of-truth layer
-- `CLAUDE.md` changes system behavior for every future session
+- `CLAUDE.md` holds the schema and rules every session loads
+- `skills/*/SKILL.md` files are the executable procedures; editing one changes how Claude runs that workflow for every future session
 
 When in doubt, ask Claude to make the change.
 
@@ -383,7 +401,7 @@ If you do not want to fix it manually, paste the output to Claude and ask it to 
 
 ### "I opened Obsidian and things look inconsistent"
 
-If the vault is in iCloud, wait for sync to settle before opening Obsidian on another machine. The dangerous case is editing the same git-backed vault on two devices while sync is still in flight.
+If the vault is synced via iCloud, Dropbox, or similar, wait for sync to settle before opening Obsidian on another machine. The dangerous case is editing the same git-backed vault on two devices while sync is still in flight.
 
 If there is a git problem, inspect first:
 
@@ -511,7 +529,3 @@ Claude should inspect the structure, explain the likely fix, and then make the c
 Renames, merges, disambiguations, and larger reorganizations are higher-risk than normal page edits because they affect backlinks, index entries, and the shape of the graph.
 
 That does not mean avoid them. It means do them deliberately.
-
----
-
-*Last updated: 2026-04-09*
